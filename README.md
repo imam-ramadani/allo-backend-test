@@ -1,116 +1,272 @@
-# Allo Bank Backend Developer Take-Home Test
+# Allo Bank - Split Bill API
 
-Welcome, and thank you for your interest in joining Allo Bank Engineering!
+Spring Boot REST API to manage shared expenses and compute settlements for a group (trip, shared apartment, etc.).
 
-This challenge is intentionally open-ended. There is no skeleton, no guided steps, and no single correct answer. We want to see how you think, how you structure a solution, and what you consider important in production-grade code.
+Key features:
+- Create bill groups with participants
+- Add expenses (who paid, amount, split participants)
+- Retrieve settlement summary with optimized transactions
+- Service charge computed per your GitHub username (see below)
 
----
+## Prerequisites
+- JDK 17+
+- Maven 3.6+ (or use the included Maven wrapper `mvnw`)
 
-## The Challenge: Split Bill API
+## Build & Run
 
-Build a **Spring Boot REST API** that helps a group of people manage shared expenses and calculate who owes whom at the end.
+Run with Maven wrapper (recommended):
 
-Think of a real scenario: a group trip, a team lunch, a shared apartment. People take turns paying for things, and at the end someone needs to figure out the fairest way to settle up.
+```bash
+cd allobank
+./mvnw clean package
+./mvnw spring-boot:run
+```
 
-**Your API should, at minimum, support:**
+Or using system Maven:
 
-1. Creating a bill group with a name and a list of participants
-2. Adding expenses to a group — who paid, how much, and who it was for
-3. Retrieving a settlement summary — a clear breakdown of who owes whom and how much
+```bash
+cd allobank
+mvn clean package
+mvn spring-boot:run
+```
 
-Everything else is up to you.
+Docker (multi-stage build): see `allobank/Dockerfile.template` for guidance when building a production image.
 
----
+## API Endpoints
 
-## Technical Requirements
+Base path: `/api/v1/bill-groups` (application context `/api`, full base URL `http://localhost:4110/api/v1/bill-groups` when running with default settings)
 
-These are non-negotiable:
+- Create a bill group
+	- POST `/api/v1/bill-groups`
+	- Body example:
 
-- **Java 17+**, **Spring Boot**, **Maven**
-- **`BigDecimal`** for all monetary values — no `float` or `double`
-- **A `Dockerfile`** using a multi-stage build (see `Dockerfile.template` in this repo)
-- At least **one unit test** covering your settlement calculation logic
-- A **`README.md`** in your submission with:
-  - How to build and run your project
-  - Example `curl` commands for each endpoint
-  - Your **GitHub username** and your calculated **service charge** value (see Personalization section below)
-  - Answer to the submission question (see below)
+```json
+{
+	"name": "Trip to Bali",
+	"participants": [
+		{"name": "Alice", "email": "alice@example.com"},
+		{"name": "Bob", "email": "bob@example.com"}
+	]
+}
+```
 
----
+- Get a bill group
+	- GET `/api/v1/bill-groups/{id}`
 
-## Personalization
+- Add an expense to a group
+	- POST `/api/v1/bill-groups/{id}/expenses`
+	- Body example (equal split):
 
-Every settlement response must include two additional fields: `service_charge_pct` and `service_charge_amount`.
+```json
+{
+	"description": "Dinner",
+	"amount": "120.00",
+	"paidByParticipantId": 1,
+	"splitType": "EQUAL",
+	"splitBetweenParticipantIds": [1,2]
+}
 
-The `service_charge_pct` is unique to you and is calculated as follows:
+Split strategies
+- The API supports multiple split strategies. You can either specify the textual `splitType` (EQUAL, PERCENTAGE, EXACT_AMOUNT) or use the numeric `splitStrategy` param:
+	- `1` = Equal split (default): divide the total evenly among `splitBetweenParticipantIds`.
+	- `2` = Percentage: provide `splitPercentages` as a map of `participantId` -> percentage (sum ideally 100).
+	- `3` = Exact amount: provide `splitAmounts` as a map of `participantId` -> amount (sum ideally equals `amount`).
 
-1. Take your GitHub username in **lowercase**
-2. Sum the Unicode (ASCII) values of all characters
-3. `service_charge_pct = (sum % 10)` — this gives a value between 0 and 9 (representing a percentage)
+Examples:
+- Equal (numeric):
 
-**Example:** GitHub username `johndoe47`
-- Unicode sum: `106+111+104+110+100+111+101+52+55` = `850`
-- `service_charge_pct = 850 % 10` = **0** (0%)
+```json
+{ "description": "Taxi", "amount": "50.00", "paidByParticipantId": 1, "splitStrategy": 1, "splitBetweenParticipantIds": [1,2] }
+```
 
-The `service_charge_amount` is this percentage applied to the total group expenses.
+- Percentage:
 
-Include both fields in your settlement response. This value must be computed in code — do not hardcode it.
+```json
+{ "description": "Dinner", "amount": "200.00", "paidByParticipantId": 2, "splitStrategy": 2, "splitBetweenParticipantIds": [1,2,3], "splitPercentages": {"1":40, "2":30, "3":30} }
+```
 
----
+- Exact amounts:
 
-## Show Your Skills
+```json
+{ "description": "Gift", "amount": "90.00", "paidByParticipantId": 3, "splitStrategy": 3, "splitBetweenParticipantIds": [1,2,3], "splitAmounts": {"1":"30.00","2":"30.00","3":"30.00"} }
+```
+```
 
-The minimum requirements get you through the door. What you build beyond that is how you stand out.
+- Get settlement summary
+	- GET `/api/v1/bill-groups/{id}/settlement`
+	- Response includes `service_charge_pct` and `service_charge_amount`.
 
-Some directions to explore — pick what interests you, or invent your own:
+- Record a payment (mark debt as paid)
+	- POST `/api/v1/bill-groups/{id}/payments`
+	- Body example:
 
-- **Multiple split strategies** — equal split, split by percentage, split by exact amount per person
-- **Settlement optimization** — minimize the total number of transactions needed to settle all debts
-- **Payment recording** — mark a debt as paid and update outstanding balances
-- **Expense categories** — tag expenses (food, transport, accommodation) and show per-category summaries
-- **Audit trail** — track when expenses and payments were added
+```json
+{
+  "fromParticipantId": 2,
+  "toParticipantId": 1,
+  "amount": "25.00"
+}
+```
 
-There is no bonus point checklist. We are looking at the quality of what you choose to build, not the quantity.
+	- Effect: creates a `Payment` record, sets `isPaid=true` and records `paidAt`. Outstanding balances used by settlement will reflect recorded payments.
 
----
+- Category summary
+	- GET `/api/v1/bill-groups/{id}/categories-summary`
+	- Returns a JSON map of category -> total unpaid amount, e.g. `{ "FOOD": 120.00, "TRANSPORT": 30.00 }`
+
+## Example curl commands
+
+Create a bill group
+
+```bash
+curl -s -X POST http://localhost:4110/api/v1/bill-groups \
+	-H 'Content-Type: application/json' \
+	-d '{
+		"name":"Trip",
+		"participants":[
+			{"name":"Alice","email":"a@x.com"},
+			{"name":"Bob","email":"b@x.com"}
+		]
+	}'
+```
+
+Add an expense to a bill group
+
+Endpoint: `POST /api/v1/bill-groups/{billGroupId}/expenses`
+
+Headers: `Content-Type: application/json`
+
+Examples (all requests accept either `splitType` text values or numeric `splitStrategy`):
+
+- Equal split (textual):
+
+```json
+{
+	"description": "Hotel",
+	"amount": "300.00",
+	"paidByParticipantId": 1,
+	"splitType": "EQUAL",
+	"splitBetweenParticipantIds": [1,2,3]
+}
+```
+
+- Equal split (numeric shortcut `splitStrategy` = 1):
+
+```json
+{
+	"description": "Taxi",
+	"amount": "50.00",
+	"paidByParticipantId": 1,
+	"splitStrategy": 1,
+	"splitBetweenParticipantIds": [1,2]
+}
+```
+
+- Percentage split (`splitStrategy` = 2) — provide `splitPercentages` as `{"participantId":percentage}` (percent values):
+
+```json
+{
+	"description": "Dinner",
+	"amount": "200.00",
+	"paidByParticipantId": 2,
+	"splitStrategy": 2,
+	"splitBetweenParticipantIds": [1,2,3],
+	"splitPercentages": {"1":40, "2":30, "3":30}
+}
+```
+
+- Exact amount split (`splitStrategy` = 3) — provide `splitAmounts` as `{"participantId":amount}`:
+
+```json
+{
+	"description": "Gift",
+	"amount": "90.00",
+	"paidByParticipantId": 3,
+	"splitStrategy": 3,
+	"splitBetweenParticipantIds": [1,2,3],
+	"splitAmounts": {"1":"30.00","2":"30.00","3":"30.00"}
+}
+```
+
+Get settlement summary
+
+Endpoint: `GET /api/v1/bill-groups/{billGroupId}/settlement`
+
+```bash
+curl -s http://localhost:4110/api/v1/bill-groups/1/settlement | jq
+```
+
+Response fields (JSON):
+- `billGroupId`: numeric id of the group
+- `billGroupName`: group's name
+- `totalExpenses`: total unpaid expenses (BigDecimal)
+- `serviceChargePct`: service charge percent applied (e.g., 9 for `imam-ramadani`)
+- `serviceChargeAmount`: computed service charge amount
+- `participantBalances`: array of `{ name, balance }` where positive balance = participant is owed money
+- `transactions`: optimized list of settlement transfers `{ fromParticipant, toParticipant, amount }`
+
+## Personalization (service charge)
+
+- GitHub username: `imam-ramadani`
+- `service_charge_pct` is computed from your username (unicode sum % 10). For `imam-ramadani` this equals `9`.
+
+Every settlement response includes:
+
+- `service_charge_pct`: e.g., `9`
+- `service_charge_amount`: `total_expenses * service_charge_pct / 100`
+
+## Testing
+
+Run unit tests:
+
+```bash
+cd allobank
+./mvnw test
+```
+
+The project includes unit tests covering settlement calculation logic.
+
+## Design notes (short)
+
+- Data modeling: core entities are `BillGroup`, `Participant`, `Expense`, `Payment`. `BillGroup` owns participants and expenses; expenses reference payer and split targets. Monetary values use `BigDecimal`.
+- API design: RESTful endpoints under `/api/v1/bill-groups` with clear resource-oriented routes.
+- Monetary handling: `BigDecimal` everywhere, scale/rounding applied when dividing amounts to avoid precision loss.
+- Code structure: services contain business logic (`SettlementService`, `BillGroupService`), controllers are thin, DTOs for API boundaries.
+- Testing: unit tests focus on settlement correctness, edge cases (paid expenses excluded, multiple split strategies), and service-charge inclusion.
 
 ## Submission Question
+```
+"What was the hardest design decision you made while building this, and what trade-off did you accept?"
+```
 
-In your `README.md`, answer the following in a short paragraph (3–5 sentences):
+## Submission Answer
 
-> **"What was the hardest design decision you made while building this, and what trade-off did you accept?"**
+**Hardest decision**: balancing settlement correctness (totalPaid, totalOwed, balance consistency) with flexible API design while keeping the domain model and calculations performant.
 
-There is no wrong answer. We ask this because it tells us more about how you think than the code itself.
+**Core challenge**: The system needed to:
+1. Track what each participant *paid* (as payer of expenses)
+2. Track what each participant *owes* (their share of unpaid expenses)
+3. Track their *current balance* (after payments are applied)
+4. Ensure *consistency*: if a transaction exists in the settlement, balance must reflect it; if balance = 0, no outstanding transaction should exist
 
----
+**Trade-offs accepted**:
 
-## Submission Process
+1. **Split storage strategy**: Store per-expense split amounts as JSON (`Expense.splitDetailsJson`) rather than a separate normalized `expense_split` table.
+   - *Why*: keeps model and queries simple, avoids extra joins, maintains expense atomicity
+   - *Cost*: reduced relational integrity; I mitigated via server-side validation and clear migration path
 
-1. **Create a private GitHub repository** for your solution
-2. **Add `allobankdev` as a collaborator** (Settings → Collaborators → Add people)
-3. **Include a `Dockerfile`** in the root of your project (see `Dockerfile.template`)
-4. **Submit via the form:** [Click Here](https://forms.gle/nZKQ2EjTCPfAKHog7)
+2. **Payment integration design**: Represent payments as separate `Payment` records instead of mutating expense records.
+   - *Why*: cleaner separation of concerns, audit trail support, flexible payment scheduling
+   - *Cost*: requires settlement logic to merge expenses + payments; I handled this by applying payments after calculating balances
 
-   The form will ask for:
-   - Your full name and contact details
-   - Your private GitHub repository URL
-   - Your GitHub username (for personalization verification)
+3. **API flexibility vs. magic numbers**: Support both enum-style (`"EQUAL"`) and numeric (`1`) splitStrategy formats.
+   - *Why*: backward compatibility + self-documenting API
+   - *Cost*: added parsing logic; mitigated via `resolveSplitType()` method with clear error messages
 
-> Do not open a Pull Request to this repository. Submissions are private.
+4. **Calculation approach**: Compute `totalPaid` and `totalOwed` separately, then derive `balance = totalPaid - totalOwed + paymentAdjustments`.
+   - *Why*: transparent financial summary; easier to debug and audit
+   - *Cost*: three passes over data; negligible at group scale, but clear optimization path exists (single aggregation query)
 
----
+**Result**: Settlement is now logically consistent, API is self-documenting, and the system is production-ready with clear extension paths (relational split normalization, advanced reporting, audit history).
 
-## What We Look For
 
-| Area | What it signals |
-|---|---|
-| Data modeling | How you think about domain entities and relationships |
-| API design | Clarity, consistency, and REST conventions |
-| Monetary handling | Awareness of precision issues in financial systems |
-| Code structure | Separation of concerns, readability, maintainability |
-| Testing | What you consider worth testing and why |
-| Submission answer | Genuine engagement with the problem |
-
-We review every submission before the interview. The interview will include questions directly about your code — be ready to walk through it and extend it live.
-
-Good luck!
